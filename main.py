@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 # ---------------------------
 # CONFIGURATION
 # ---------------------------
-# Set your OpenAI API key
-load_dotenv()
+load_dotenv()  # load environment variables from .env
 api_key = os.getenv("OPENAI_API_KEY")
 print(api_key)
 client = OpenAI(api_key=api_key)
+
 # Set your Stockfish engine path (adjust if needed)
 STOCKFISH_PATH = "/usr/bin/stockfish"  # update this path on your system
 
@@ -35,7 +35,6 @@ except Exception as e:
 # FUNCTION TO GET AI MOVE FROM OPENAI API
 # ---------------------------
 def get_ai_move(board: chess.Board) -> str:
-
     """
     Ask the OpenAI API for the best move given the current board position.
     The prompt instructs the model to return only a UCI-formatted move (e.g. 'e2e4').
@@ -48,10 +47,12 @@ def get_ai_move(board: chess.Board) -> str:
     )
 
     try:
-        response = client.chat.completions.create(model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=10)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=10
+        )
         move_str = response.choices[0].message.content.strip()
         return move_str
     except Exception as e:
@@ -59,11 +60,40 @@ def get_ai_move(board: chess.Board) -> str:
         return ""
 
 # ---------------------------
+# HELPER FUNCTION TO PROCESS THE AI MOVE
+# ---------------------------
+def process_ai_move(board: chess.Board, move_str: str, ai_elo: int):
+    """
+    Processes the AI's move string.
+    If the move format is invalid or the move is illegal, it prints the attempted move,
+    decrements the Elo, and returns (ai_elo, None, move_str).
+    Otherwise, it pushes the move to the board and returns (ai_elo, move, move_str).
+    """
+    try:
+        move = chess.Move.from_uci(move_str)
+    except Exception:
+        print(f"ERROR: The move format '{move_str}' is invalid. AI loses by default.")
+        ai_elo -= ELO_LOSS_DECREMENT
+        print(f"Attempted move: {move_str}")
+        return ai_elo, None, move_str
+
+    if move not in board.legal_moves:
+        print(f"ERROR: The move '{move_str}' is illegal in the current position. AI loses by default.")
+        ai_elo -= ELO_LOSS_DECREMENT
+        print(f"Attempted move: {move_str}")
+        return ai_elo, None, move_str
+
+    board.push(move)
+    return ai_elo, move, move_str
+
+# ---------------------------
 # MAIN GAME LOOP
 # ---------------------------
 def main():
     board = chess.Board()
     ai_elo = INITIAL_AI_ELO
+    failed_move_number = None  # Will store the move number at which the AI made an invalid move
+    ai_move_number = 0  # Count of AI moves
 
     print("Welcome to Chess vs. OpenAI API!")
     print("You play White. Enter moves in Standard Algebraic Notation (e.g., e4, Nf3) or UCI (e.g., e2e4).")
@@ -93,27 +123,17 @@ def main():
             board.push(move)
         else:
             # --- AI's move ---
+            ai_move_number += 1  # Increment count for each AI move
             print("AI is thinking...\n")
             ai_move_str = get_ai_move(board)
             print(f"OpenAI API returned: {ai_move_str}")
 
-            # First, try to convert the string into a move.
-            try:
-                move = chess.Move.from_uci(ai_move_str)
-            except Exception:
-                print(f"ERROR: The move format '{ai_move_str}' is invalid. AI loses by default.")
-                ai_elo -= ELO_LOSS_DECREMENT
+            ai_elo, move, attempted_move = process_ai_move(board, ai_move_str, ai_elo)
+            if move is None:
+                failed_move_number = ai_move_number
                 break
 
-            # Check if the move is legal.
-            if move not in board.legal_moves:
-                print(f"ERROR: The move '{ai_move_str}' is illegal in the current position. AI loses by default.")
-                ai_elo -= ELO_LOSS_DECREMENT
-                break
-
-            # Move is valid: play it.
-            board.push(move)
-            print(f"AI plays: {ai_move_str}")
+            print(f"AI plays: {attempted_move}")
 
             # Optionally, evaluate the position after the move using Stockfish.
             if engine:
@@ -133,8 +153,10 @@ def main():
     result = board.result()
     print(f"Result: {result}")
 
+    if failed_move_number is not None:
+        print(f"Invalid move occurred on GPT move number: {failed_move_number}")
+
     # Update AI Elo based on game result if the game ended normally.
-    # (In a real rating system, you’d use expected scores and a K-factor.)
     if result == "1-0":
         print("You win!")
         ai_elo -= ELO_LOSS_DECREMENT
