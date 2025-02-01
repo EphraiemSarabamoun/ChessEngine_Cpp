@@ -9,11 +9,12 @@ from dotenv import load_dotenv
 # ---------------------------
 load_dotenv()  # load environment variables from .env
 api_key = os.getenv("OPENAI_API_KEY")
-print(api_key)
+print("API key:", api_key)
 client = OpenAI(api_key=api_key)
 
 # Set your Stockfish engine path (adjust if needed)
-STOCKFISH_PATH = "/usr/bin/stockfish"  # update this path on your system
+# Make sure to point to the actual binary.
+STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
 
 # Starting Elo rating for the AI (this is just an example)
 INITIAL_AI_ELO = 1500
@@ -23,7 +24,7 @@ ELO_WIN_INCREMENT = 50
 ELO_LOSS_DECREMENT = 50
 
 # ---------------------------
-# INITIALIZE ENGINE
+# INITIALIZE STOCKFISH ENGINE
 # ---------------------------
 try:
     engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
@@ -32,7 +33,7 @@ except Exception as e:
     engine = None  # Engine is optional
 
 # ---------------------------
-# FUNCTION TO GET AI MOVE FROM OPENAI API
+# FUNCTION TO GET AI MOVE FROM OPENAI API (GPT as Black)
 # ---------------------------
 def get_ai_move(board: chess.Board) -> str:
     """
@@ -48,10 +49,13 @@ def get_ai_move(board: chess.Board) -> str:
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="o1-mini",
+            reasoning_effort= "medium",
+            # model="gpt-4-turbo",
+            # model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=10
+            temperature=1
+            # max_tokens=10
         )
         move_str = response.choices[0].message.content.strip()
         return move_str
@@ -64,9 +68,9 @@ def get_ai_move(board: chess.Board) -> str:
 # ---------------------------
 def process_ai_move(board: chess.Board, move_str: str, ai_elo: int):
     """
-    Processes the AI's move string.
-    If the move format is invalid or the move is illegal, it prints the attempted move,
-    decrements the Elo, and returns (ai_elo, None, move_str).
+    Processes GPT's move string.
+    If the move format is invalid or the move is illegal,
+    it prints the attempted move, decrements the Elo, and returns (ai_elo, None, move_str).
     Otherwise, it pushes the move to the board and returns (ai_elo, move, move_str).
     """
     try:
@@ -87,93 +91,119 @@ def process_ai_move(board: chess.Board, move_str: str, ai_elo: int):
     return ai_elo, move, move_str
 
 # ---------------------------
-# MAIN GAME LOOP
+# SIMULATE A SINGLE GAME
 # ---------------------------
-def main():
+def simulate_game(current_elo: int):
+    """
+    Simulate one game of chess with Stockfish playing White and GPT playing Black.
+    Returns:
+      - result: final board result (e.g. "1-0", "0-1", or "*")
+      - updated Elo rating
+      - failed_move_number: move number at which GPT made an invalid move (or None)
+      - final board state
+    """
     board = chess.Board()
-    ai_elo = INITIAL_AI_ELO
-    failed_move_number = None  # Will store the move number at which the AI made an invalid move
-    ai_move_number = 0  # Count of AI moves
+    ai_elo = current_elo
+    failed_move_number = None
+    ai_move_number = 0  # Counts the number of moves GPT (Black) makes
 
-    print("Welcome to Chess vs. OpenAI API!")
-    print("You play White. Enter moves in Standard Algebraic Notation (e.g., e4, Nf3) or UCI (e.g., e2e4).")
-    print("---------------------------------------------------\n")
-
+    # Continue until game over
     while not board.is_game_over():
-        print(board)
-        print("")  # empty line for readability
-
         if board.turn == chess.WHITE:
-            # --- Human's move ---
-            user_input = input("Your move: ").strip()
+            # White's move from Stockfish (use longer search time for dynamic moves)
             try:
-                # Try parsing as SAN first; if that fails, try UCI.
-                try:
-                    move = board.parse_san(user_input)
-                except ValueError:
-                    move = chess.Move.from_uci(user_input)
-            except Exception:
-                print("Could not parse your move. Please try again.\n")
-                continue
-
-            if move not in board.legal_moves:
-                print("Illegal move. Please try again.\n")
-                continue
-
-            board.push(move)
+                result = engine.play(board, chess.engine.Limit(time=2.0))
+                board.push(result.move)
+            except Exception as e:
+                print(f"Error in engine move: {e}")
+                break
         else:
-            # --- AI's move ---
-            ai_move_number += 1  # Increment count for each AI move
-            print("AI is thinking...\n")
+            # GPT's move as Black
+            ai_move_number += 1
             ai_move_str = get_ai_move(board)
-            print(f"OpenAI API returned: {ai_move_str}")
-
+            print(f"GPT (Black) move {ai_move_number}: {ai_move_str}")
             ai_elo, move, attempted_move = process_ai_move(board, ai_move_str, ai_elo)
             if move is None:
                 failed_move_number = ai_move_number
                 break
+            print(f"GPT plays: {attempted_move}")
 
-            print(f"AI plays: {attempted_move}")
-
-            # Optionally, evaluate the position after the move using Stockfish.
+            # Optional: evaluate position after GPT move using Stockfish
             if engine:
                 try:
-                    info = engine.analyse(board, chess.engine.Limit(time=0.1))
-                    # The score is from White’s perspective.
+                    info = engine.analyse(board, chess.engine.Limit(time=0.5))
                     score = info["score"].white().score(mate_score=10000)
-                    print(f"Stockfish evaluation after AI move: {score} centipawns\n")
+                    print(f"Stockfish evaluation after GPT move: {score} centipawns\n")
                 except Exception as e:
                     print(f"Error during engine analysis: {e}\n")
 
-    # ---------------------------
-    # GAME HAS ENDED
-    # ---------------------------
-    print("\nGame over!")
-    print(board)
+    # Determine game result.
+    # If GPT made an invalid move, we force the result to be a loss ("1-0").
     result = board.result()
-    print(f"Result: {result}")
-
     if failed_move_number is not None:
-        print(f"Invalid move occurred on GPT move number: {failed_move_number}")
+        result = "1-0"
 
-    # Update AI Elo based on game result if the game ended normally.
+    # Update Elo based on game result.
     if result == "1-0":
-        print("You win!")
+        print("Result: White wins (GPT loses).")
         ai_elo -= ELO_LOSS_DECREMENT
     elif result == "0-1":
-        print("AI wins!")
+        print("Result: GPT wins!")
         ai_elo += ELO_WIN_INCREMENT
     else:
-        print("Draw! No Elo change.")
+        print("Result: Draw!")
+        # No Elo change on draw
 
-    print(f"Final AI Elo: {ai_elo}")
+    return result, ai_elo, failed_move_number, board
+
+# ---------------------------
+# SIMULATE MULTIPLE GAMES
+# ---------------------------
+def simulate_games(num_games: int):
+    current_elo = INITIAL_AI_ELO
+    wins = 0
+    losses = 0
+    draws = 0
+    invalid_moves = 0
+
+    # Dictionary to accumulate invalid move numbers and their frequency.
+    invalid_move_distribution = {}
+
+    for i in range(num_games):
+        print(f"\n=== Starting Game {i+1} ===")
+        result, current_elo, failed_move_number, board = simulate_game(current_elo)
+        print(board)
+        print(f"Game {i+1} result: {result}")
+
+        if failed_move_number is not None:
+            print(f"GPT made an invalid move on move number {failed_move_number}")
+            invalid_moves += 1
+            invalid_move_distribution[failed_move_number] = invalid_move_distribution.get(failed_move_number, 0) + 1
+
+        if result == "0-1":  # GPT wins as Black
+            wins += 1
+        elif result == "1-0":  # GPT loses
+            losses += 1
+        else:
+            draws += 1
+
+        print(f"Current Elo after game {i+1}: {current_elo}")
+
+    print("\n=== Simulation Complete ===")
+    print(f"Total games: {num_games}")
+    print(f"Wins: {wins}, Losses: {losses}, Draws: {draws}, Invalid moves: {invalid_moves}")
+    print(f"Final Elo: {current_elo}")
+    print("\nInvalid move distribution (move number : count):")
+    for move_number in sorted(invalid_move_distribution.keys()):
+        print(f"  {move_number}: {invalid_move_distribution[move_number]}")
 
 # ---------------------------
 # ENTRY POINT
 # ---------------------------
 if __name__ == '__main__':
     try:
-        main()
+        # For example, simulate 100 games:
+        simulate_games(10)
     finally:
         if engine:
             engine.quit()
