@@ -47,15 +47,24 @@ def get_ai_move(board: chess.Board) -> str:
         "Please reply with the best move in UCI notation (e.g. e2e4) and nothing else."
     )
 
+    # try:
+    #     response = client.chat.completions.create(
+    #         model="o1-preview",
+    #         # model="o1-preview",
+    #         # model="gpt-4-turbo",
+    #         # model="gpt-3.5-turbo",
+    #         messages=[{"role": "user", "content": prompt}],
+    #         temperature=1,
+    #         max_completion_tokens=1000
     try:
         response = client.chat.completions.create(
-            model="o1-mini",
-            reasoning_effort= "medium",
-            # model="gpt-4-turbo",
-            # model="gpt-3.5-turbo",
+            model="gpt-4o",
+        #     # model="gpt-4o-mini",
+        #     # model="gpt-4-turbo",
+        #     # model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
-            temperature=1
-            # max_tokens=10
+            temperature=0,
+            max_tokens=100
         )
         move_str = response.choices[0].message.content.strip()
         return move_str
@@ -64,7 +73,7 @@ def get_ai_move(board: chess.Board) -> str:
         return ""
 
 # ---------------------------
-# HELPER FUNCTION TO PROCESS THE AI MOVE
+# HELPER FUN CTION TO PROCESS THE AI MOVE
 # ---------------------------
 def process_ai_move(board: chess.Board, move_str: str, ai_elo: int):
     """
@@ -203,7 +212,7 @@ def simulate_games(num_games: int):
 if __name__ == '__main__':
     try:
         # For example, simulate 100 games:
-        simulate_games(10)
+        simulate_games(25)
     finally:
         if engine:
             engine.quit()
