@@ -152,9 +152,6 @@ def simulate_games(num_games: int):
     for move_number in sorted(invalid_move_distribution.keys()):
         print(f"  {move_number}: {invalid_move_distribution[move_number]}")
 
-# ---------------------------
-# ENTRY POINT
-# ---------------------------
 if __name__ == '__main__':
     try:
         # For example, simulate 25 games:
